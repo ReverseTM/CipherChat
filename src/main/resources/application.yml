@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: CipherChat
+  datasource:
+    url: jdbc:postgresql://localhost:5432/crypto_messenger
+    username: postgres
+    password: 111
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: true
