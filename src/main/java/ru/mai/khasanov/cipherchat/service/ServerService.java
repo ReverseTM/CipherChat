@@ -5,8 +5,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.mai.khasanov.cipherchat.cryptography.DiffieHellmanAlgorithm;
+import ru.mai.khasanov.cipherchat.kafka.KafkaWriter;
 import ru.mai.khasanov.cipherchat.model.Room;
 import ru.mai.khasanov.cipherchat.model.User;
+import ru.mai.khasanov.cipherchat.model.message.KafkaMessage;
+import ru.mai.khasanov.cipherchat.model.message.DestinationMessage;
 
 import java.math.BigInteger;
 import java.util.Optional;
@@ -17,11 +20,19 @@ public class ServerService {
     private final UserService userService;
     private final RoomService roomService;
 
+    private final KafkaWriter kafkaWriter;
+
     @Autowired
-    public ServerService(UserService userService, RoomService roomService) {
+    public ServerService(UserService userService, RoomService roomService, KafkaWriter kafkaWriter) {
         this.userService = userService;
         this.roomService = roomService;
+        this.kafkaWriter = kafkaWriter;
     }
+
+//    public ServerService(UserService userService, RoomService roomService) {
+//        this.userService = userService;
+//        this.roomService = roomService;
+//    }
 
     @Transactional
     public synchronized Room createRoom(String name,
@@ -102,6 +113,24 @@ public class ServerService {
         userService.addRoomToUser(user, room);
 
         Notification.show("You joined to room successfully");
+
+        if (room.getUsers().size() == 2) {
+            long anotherUserId = room.getUsers().iterator().next().getId();
+            exchangeInformation(userId, anotherUserId, roomId);
+        }
+    }
+
+    private void exchangeInformation(long thisUserId, long anotherUserId, long roomId) {
+        String topic = String.format("input_room_%s", roomId);
+
+        DestinationMessage thisUserMessage = new DestinationMessage(thisUserId, anotherUserId);
+        DestinationMessage anotherUserMessage = new DestinationMessage(anotherUserId, thisUserId);
+
+        KafkaMessage messageToThisUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, anotherUserMessage);
+        KafkaMessage messageToAnotherUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, thisUserMessage);
+
+        kafkaWriter.write(messageToThisUser.toBytes(), topic);
+        kafkaWriter.write(messageToAnotherUser.toBytes(), topic);
     }
 
     @Transactional

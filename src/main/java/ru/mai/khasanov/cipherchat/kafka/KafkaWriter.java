@@ -4,9 +4,11 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
+@Component
 public class KafkaWriter {
     private final KafkaProducer<byte[], byte[]> kafkaProducer;
 

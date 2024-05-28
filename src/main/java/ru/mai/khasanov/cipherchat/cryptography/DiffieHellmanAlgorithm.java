@@ -1,6 +1,7 @@
 package ru.mai.khasanov.cipherchat.cryptography;
 
 import lombok.AllArgsConstructor;
+import org.atmosphere.interceptor.AtmosphereResourceStateRecovery;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -10,10 +11,10 @@ import java.util.Random;
 
 @AllArgsConstructor
 public class DiffieHellmanAlgorithm {
-    private static final Random random = new SecureRandom();
+    private static final Random randomGenerator = new SecureRandom();
 
     public static BigInteger[] generateParams(int bitLength) {
-        BigInteger p = BigInteger.probablePrime(bitLength, random);
+        BigInteger p = BigInteger.probablePrime(bitLength, randomGenerator);
         BigInteger g = findPrimitiveRoot(p);
 
         return new BigInteger[]{g, p};
@@ -61,4 +62,29 @@ public class DiffieHellmanAlgorithm {
         }
         return factors;
     }
+
+    public static byte[] generateOwnPrivateKey() {
+        return new BigInteger(32, randomGenerator).toByteArray();
+    }
+
+    public static byte[] generateOwnPublicKey(byte[] privateKey, byte[] g, byte[] p) {
+        BigInteger G = new BigInteger(g);
+        BigInteger P = new BigInteger(p);
+        BigInteger ownPrivateKey = new BigInteger(privateKey);
+
+        return G.modPow(ownPrivateKey, P).toByteArray();
+    }
+
+    public static byte[] calculateSharedPrivateKey(byte[] anotherUserPublicKey, byte[] ownPrivateKey, byte[] p) {
+        BigInteger publicKey = new BigInteger(anotherUserPublicKey);
+        BigInteger privateKey = new BigInteger(ownPrivateKey);
+        BigInteger P = new BigInteger(p);
+        BigInteger key = publicKey.modPow(privateKey, P);
+
+        byte[] sharedPrivateKey = new byte[16];
+        System.arraycopy(key.toByteArray(), 0, sharedPrivateKey, 0, sharedPrivateKey.length);
+
+        return sharedPrivateKey;
+    }
+
 }

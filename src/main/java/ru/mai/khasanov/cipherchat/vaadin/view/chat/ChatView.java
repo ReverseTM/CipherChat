@@ -1,5 +1,6 @@
 package ru.mai.khasanov.cipherchat.vaadin.view.chat;
 
+import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -18,8 +19,19 @@ import com.vaadin.flow.component.upload.receivers.MultiFileMemoryBuffer;
 import com.vaadin.flow.router.*;
 import com.vaadin.flow.server.StreamResource;
 import com.vaadin.flow.theme.lumo.LumoUtility;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import ru.mai.khasanov.cipherchat.cryptography.DiffieHellmanAlgorithm;
+import ru.mai.khasanov.cipherchat.kafka.KafkaWriter;
 import ru.mai.khasanov.cipherchat.model.Room;
+import ru.mai.khasanov.cipherchat.model.RoomCipherInfo;
 import ru.mai.khasanov.cipherchat.model.User;
+import ru.mai.khasanov.cipherchat.model.message.ExchangeKeyMessage;
+import ru.mai.khasanov.cipherchat.model.message.KafkaMessage;
+import ru.mai.khasanov.cipherchat.model.message.DestinationMessage;
 import ru.mai.khasanov.cipherchat.service.RoomService;
 import ru.mai.khasanov.cipherchat.service.ServerService;
 import ru.mai.khasanov.cipherchat.service.UserService;
@@ -30,12 +42,12 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @PageTitle("Chat")
 @Route(value = "user/:userId/room/:roomId?", layout = MainLayout.class)
@@ -43,16 +55,28 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
     private User user;
     private Room room;
 
+    private byte[] ownPrivateKey;
+    private byte[] sharedPrivateKey;
+
     private final ServerService serverService;
     private final UserService userService;
     private final RoomService roomService;
 
+    private final KafkaWriter kafkaWriter;
+    private KafkaConsumer<byte[], byte[]> kafkaConsumer;
+    private List<String> subscribedTopics = new ArrayList<>();
+    private volatile boolean running;
+
+    private ExecutorService executorService;
+
     private final Map<Long, VerticalLayout> roomContainers;
 
-    public ChatView(ServerService serverService, UserService userService, RoomService roomService) {
+    public ChatView(ServerService serverService, UserService userService, RoomService roomService, KafkaWriter kafkaWriter) {
         this.serverService = serverService;
         this.userService = userService;
         this.roomService = roomService;
+
+        this.kafkaWriter = kafkaWriter;
 
         this.roomContainers = new HashMap<>();
 
@@ -60,6 +84,8 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
         setSpacing(false);
 
         setSizeFull();
+
+        startKafkaConsumer();
     }
 
     @Override
@@ -82,6 +108,13 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
         }
 
         loadContent();
+    }
+
+    @Override
+    protected void onDetach(DetachEvent detachEvent) {
+        super.onDetach(detachEvent);
+        stopKafkaConsumer();
+        kafkaWriter.close();
     }
 
     // FRONTEND
@@ -373,5 +406,138 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
 
     private void navigateToLoginView() {
         UI.getCurrent().navigate(LoginView.class);
+    }
+
+    private void startKafkaConsumer() {
+        kafkaConsumer = new KafkaConsumer<>(Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9093",
+                ConsumerConfig.GROUP_ID_CONFIG, "chat-group",
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"
+        ), new ByteArrayDeserializer(), new ByteArrayDeserializer());
+        updateSubscription();
+
+        System.out.println("Kafka started");
+
+        running = true;
+        executorService = Executors.newSingleThreadExecutor();
+        executorService.submit(() -> {
+            while (running) {
+                ConsumerRecords<byte[], byte[]> records = kafkaConsumer.poll(Duration.ofMillis(100));
+                for (ConsumerRecord<byte[], byte[]> record : records) {
+                    System.out.println(record);
+                    handleKafkaMessage(record);
+                }
+            }
+        });
+    }
+
+    private void handleKafkaMessage(ConsumerRecord<byte[], byte[]> record) {
+        KafkaMessage message = KafkaMessage.toKafkaMessage(new String(record.value()));
+        String topic = record.topic();
+        String roomId = topic.split("_")[2];
+
+        System.out.println(message.action());
+
+        // Обработка сообщений Kafka
+        switch (message.action()) {
+            case SETUP_CONNECTION -> {
+                if (message.content() instanceof DestinationMessage destinationMessage) {
+                    exchangePublicKey(destinationMessage);
+                } else {
+                    Notification.show("create_private_key");
+                }
+            }
+
+            case EXCHANGE_PUBLIC_KEY -> {
+                if (message.content() instanceof ExchangeKeyMessage keyMessage) {
+                    setSharedPrivateKey(keyMessage);
+                } else {
+                    Notification.show("exchange_public_key");
+                }
+            }
+
+            case SEND_MESSAGE -> {
+                // Обработка отправленного сообщения
+            }
+
+            default -> throw new IllegalStateException("Unexpected type");
+        }
+    }
+
+    private void exchangePublicKey(DestinationMessage destinationMessage) {
+        RoomCipherInfo roomCipherInfo = room.getRoomCipherInfo();
+
+        long thisUserId = destinationMessage.consumerId();
+        long anotherUserId = destinationMessage.producerId();
+
+        if (thisUserId != this.user.getId()) {
+            return;
+        }
+
+
+        String topic = String.format("input_room_%s", room.getId());
+
+        ownPrivateKey = DiffieHellmanAlgorithm.generateOwnPrivateKey();
+        byte[] ownPublicKey = DiffieHellmanAlgorithm.generateOwnPublicKey(
+                ownPrivateKey,
+                roomCipherInfo.getG(),
+                roomCipherInfo.getP());
+
+        DestinationMessage thisUserMessage = new DestinationMessage(thisUserId, anotherUserId);
+
+        ExchangeKeyMessage message = new ExchangeKeyMessage(thisUserMessage, ownPublicKey);
+        KafkaMessage keyMessage = new KafkaMessage(KafkaMessage.Action.EXCHANGE_PUBLIC_KEY, message);
+
+        kafkaWriter.write(keyMessage.toBytes(), topic);
+    }
+
+    private void setSharedPrivateKey(ExchangeKeyMessage keyMessage) {
+        RoomCipherInfo roomCipherInfo = room.getRoomCipherInfo();
+        DestinationMessage destinationMessage = keyMessage.destinationMessage();
+
+        long thisUserId = destinationMessage.consumerId();
+        long anotherUserId = destinationMessage.producerId();
+
+        if (thisUserId != this.user.getId()) {
+            return;
+        }
+
+        sharedPrivateKey = DiffieHellmanAlgorithm.calculateSharedPrivateKey(
+                keyMessage.publicKey(),
+                ownPrivateKey,
+                roomCipherInfo.getP());
+
+        System.out.println(Arrays.toString(sharedPrivateKey));
+    }
+
+    private void updateSubscription() {
+        subscribedTopics = getAllRoomTopics();
+        kafkaConsumer.subscribe(subscribedTopics);
+    }
+
+    private List<String> getAllRoomTopics() {
+        List<Room> rooms = roomService.getAllRooms();
+        List<String> topics = new ArrayList<>();
+        for (Room room : rooms) {
+            topics.add("input_room_" + room.getId());
+        }
+        return topics;
+    }
+
+    public void addRoomTopic(String roomId) {
+        String newTopic = "input_room_" + roomId;
+        if (!subscribedTopics.contains(newTopic)) {
+            subscribedTopics.add(newTopic);
+            updateSubscription();
+        }
+    }
+
+    private void stopKafkaConsumer() {
+        if (kafkaConsumer != null) {
+            running = false;
+            kafkaConsumer.wakeup();
+            executorService.shutdown();
+            kafkaConsumer.close();
+        }
     }
 }

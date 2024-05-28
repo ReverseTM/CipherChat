@@ -37,6 +37,9 @@ dependencies {
     implementation 'org.springframework.kafka:spring-kafka'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
+    // json
+    implementation 'com.google.code.gson:gson:2.10.1'
+
     // vaadin
     implementation 'org.parttio:line-awesome:2.0.0'
     

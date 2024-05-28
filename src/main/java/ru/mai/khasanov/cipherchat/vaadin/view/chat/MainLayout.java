@@ -292,7 +292,9 @@ public class MainLayout extends AppLayout implements DetachNotifier {
         Tabs tabs = new Tabs();
 
         for (Room room : rooms) {
-            tabs.add(createTab(room));
+            if (room.getUsers().size() < 2) {
+                tabs.add(createTab(room));
+            }
         }
 
         tabs.setSelectedTab(null);

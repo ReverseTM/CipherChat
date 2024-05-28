@@ -1,7 +1,9 @@
 package ru.mai.khasanov.cipherchat.service;
 
 import org.springframework.stereotype.Service;
+import ru.mai.khasanov.cipherchat.cryptography.Utils.IVGenerator;
 import ru.mai.khasanov.cipherchat.model.Room;
+import ru.mai.khasanov.cipherchat.model.RoomCipherInfo;
 import ru.mai.khasanov.cipherchat.model.User;
 import ru.mai.khasanov.cipherchat.repository.RoomRepository;
 
@@ -24,13 +26,18 @@ public class RoomService {
             byte[] g,
             byte[] p) {
 
-        Room room = Room.builder()
-                .name(name)
+        RoomCipherInfo info = RoomCipherInfo.builder()
                 .encryptionAlgorithm(encryptionAlgorithm)
                 .cipherMode(cipherMode)
                 .paddingMode(paddingMode)
+                .IV(IVGenerator.generate(16))
                 .g(g)
                 .p(p)
+                .build();
+
+        Room room = Room.builder()
+                .name(name)
+                .roomCipherInfo(info)
                 .build();
 
         return roomRepository.save(room);

@@ -28,29 +28,10 @@ public class Room {
     @EqualsAndHashCode.Include
     private String name;
 
-    @Column(name = "encryption_algorithm")
-    @NotBlank(message = "Encryption algorithm cannot be blank")
+    @Embedded
     @NotNull
     @EqualsAndHashCode.Include
-    private String encryptionAlgorithm;
-
-    @Column(name = "cipher_mode")
-    @NotBlank(message = "Cipher mode cannot be blank")
-    @NotNull
-    @EqualsAndHashCode.Include
-    private String cipherMode;
-
-    @Column(name = "padding_mode")
-    @NotBlank(message = "Padding name cannot be blank")
-    @NotNull
-    @EqualsAndHashCode.Include
-    private String paddingMode;
-
-    @Column(name = "primitive_root")
-    private byte[] g;
-
-    @Column(name = "modulo")
-    private byte[] p;
+    private RoomCipherInfo roomCipherInfo;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
