@@ -82,7 +82,8 @@ public class DiffieHellmanAlgorithm {
         BigInteger key = publicKey.modPow(privateKey, P);
 
         byte[] sharedPrivateKey = new byte[16];
-        System.arraycopy(key.toByteArray(), 0, sharedPrivateKey, 0, sharedPrivateKey.length);
+        int length = Math.min(key.toByteArray().length, sharedPrivateKey.length);
+        System.arraycopy(key.toByteArray(), 0, sharedPrivateKey, 0, length);
 
         return sharedPrivateKey;
     }

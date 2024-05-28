@@ -9,7 +9,6 @@ import ru.mai.khasanov.cipherchat.kafka.KafkaWriter;
 import ru.mai.khasanov.cipherchat.model.Room;
 import ru.mai.khasanov.cipherchat.model.User;
 import ru.mai.khasanov.cipherchat.model.message.KafkaMessage;
-import ru.mai.khasanov.cipherchat.model.message.DestinationMessage;
 
 import java.math.BigInteger;
 import java.util.Optional;
@@ -29,30 +28,23 @@ public class ServerService {
         this.kafkaWriter = kafkaWriter;
     }
 
-//    public ServerService(UserService userService, RoomService roomService) {
-//        this.userService = userService;
-//        this.roomService = roomService;
-//    }
-
     @Transactional
-    public synchronized Room createRoom(String name,
+    public synchronized void createRoom(String name,
                                         String algorithm,
                                         String mode,
                                         String padding) {
 
         if (roomService.existsByName(name)) {
             Notification.show("Room with same name already exist");
-            return null;
+            return;
         }
 
         BigInteger[] params = DiffieHellmanAlgorithm.generateParams(32);
         byte[] g = params[0].toByteArray();
         byte[] p = params[1].toByteArray();
 
-        Room room = roomService.createRoom(name, algorithm, mode, padding, g, p);
+        roomService.createRoom(name, algorithm, mode, padding, g, p);
         Notification.show("Room created successfully");
-
-        return room;
     }
 
     @Transactional
@@ -82,18 +74,18 @@ public class ServerService {
     }
 
     @Transactional
-    public synchronized void connectRoom(long userId, long roomId) {
+    public synchronized boolean connectRoom(long userId, long roomId) {
         Optional<Room> maybeRoom = roomService.getRoomById(roomId);
         Optional<User> maybeUser = userService.getUserById(userId);
 
         if (maybeRoom.isEmpty()) {
             Notification.show("Room with id " + roomId + " does not exist");
-            return;
+            return false;
         }
 
         if (maybeUser.isEmpty()) {
             Notification.show("User with id " + userId + " does not exist");
-            return;
+            return false;
         }
 
         Room room = maybeRoom.get();
@@ -101,12 +93,19 @@ public class ServerService {
 
         if (room.getUsers().contains(user)) {
             Notification.show("You already joined to this room");
-            return;
+            return false;
         }
 
         if (room.getUsers().size() == 2) {
             Notification.show("The maximum number of group members has been reached");
-            return;
+            return false;
+        }
+
+        long anotherUserId = 0;
+        boolean setupConnection = false;
+        if (room.getUsers().size() == 1) {
+            anotherUserId = room.getUsers().iterator().next().getId();
+            setupConnection = true;
         }
 
         roomService.addUserToRoom(user, room);
@@ -114,23 +113,22 @@ public class ServerService {
 
         Notification.show("You joined to room successfully");
 
-        if (room.getUsers().size() == 2) {
-            long anotherUserId = room.getUsers().iterator().next().getId();
+        if (setupConnection) {
             exchangeInformation(userId, anotherUserId, roomId);
         }
+
+        return true;
     }
 
     private void exchangeInformation(long thisUserId, long anotherUserId, long roomId) {
-        String topic = String.format("input_room_%s", roomId);
+        String thisUserTopic = String.format("input_room_%s_user_%s", roomId, thisUserId);
+        String anotherUserTopic = String.format("input_room_%s_user_%s", roomId, anotherUserId);
 
-        DestinationMessage thisUserMessage = new DestinationMessage(thisUserId, anotherUserId);
-        DestinationMessage anotherUserMessage = new DestinationMessage(anotherUserId, thisUserId);
+        KafkaMessage messageToThisUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, anotherUserId);
+        KafkaMessage messageToAnotherUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, thisUserId);
 
-        KafkaMessage messageToThisUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, anotherUserMessage);
-        KafkaMessage messageToAnotherUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, thisUserMessage);
-
-        kafkaWriter.write(messageToThisUser.toBytes(), topic);
-        kafkaWriter.write(messageToAnotherUser.toBytes(), topic);
+        kafkaWriter.write(messageToThisUser.toBytes(), thisUserTopic);
+        kafkaWriter.write(messageToAnotherUser.toBytes(), anotherUserTopic);
     }
 
     @Transactional

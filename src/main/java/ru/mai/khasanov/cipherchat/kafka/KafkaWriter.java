@@ -25,9 +25,10 @@ public class KafkaWriter {
 
     public void write(byte[] message, String topic) {
         kafkaProducer.send(new ProducerRecord<>(topic, message));
+        kafkaProducer.flush();
     }
 
-    public void close() {
+    public void stop() {
         kafkaProducer.close();
     }
 }

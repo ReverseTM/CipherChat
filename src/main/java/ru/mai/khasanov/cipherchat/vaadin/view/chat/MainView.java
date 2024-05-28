@@ -1,215 +1,267 @@
 package ru.mai.khasanov.cipherchat.vaadin.view.chat;
 
+import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.avatar.Avatar;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.contextmenu.MenuItem;
-import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H1;
-import com.vaadin.flow.component.html.H2;
-import com.vaadin.flow.component.html.Span;
-import com.vaadin.flow.component.icon.Icon;
+import com.vaadin.flow.component.html.*;
 import com.vaadin.flow.component.menubar.MenuBar;
+import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.Scroller;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
-import com.vaadin.flow.component.tabs.Tab;
-import com.vaadin.flow.component.tabs.Tabs;
 import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.router.BeforeEnterEvent;
+import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.server.VaadinSession;
-import com.vaadin.flow.theme.lumo.LumoUtility;
+import com.vaadin.flow.router.RouteParameters;
+import com.vaadin.flow.shared.Registration;
 import ru.mai.khasanov.cipherchat.model.Room;
 import ru.mai.khasanov.cipherchat.model.User;
 import ru.mai.khasanov.cipherchat.service.RoomService;
 import ru.mai.khasanov.cipherchat.service.ServerService;
+import ru.mai.khasanov.cipherchat.service.UserService;
+import ru.mai.khasanov.cipherchat.vaadin.Broadcaster;
 import ru.mai.khasanov.cipherchat.vaadin.view.login.LoginView;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Route(value = "user/:userId")
-public class MainView extends HorizontalLayout {
-    private final User user;
+public class MainView extends HorizontalLayout implements BeforeEnterObserver {
+    private User user;
+
+    private Registration broadcasterRegistration;
 
     private final ServerService serverService;
+    private final UserService userService;
     private final RoomService roomService;
 
-    VerticalLayout menu;
-    VerticalLayout userBar;
-    VerticalLayout toolBar;
-    VerticalLayout chats;
+    private final Scroller roomsList = new Scroller();
 
-    Tabs tabs = new Tabs();
-
-    private static class RoomTab extends Tab {
-        private final RoomInfo roomInfo;
-
-        public RoomTab(RoomInfo roomInfo) {
-            super();
-            this.roomInfo = roomInfo;
-        }
-    }
-
-    public record RoomInfo(long roomId, String name) {
-
-    }
-
-    public MainView(ServerService serverService, RoomService roomService) {
+    public MainView(ServerService serverService, UserService userService, RoomService roomService) {
         this.serverService = serverService;
+        this.userService = userService;
         this.roomService = roomService;
 
-        this.user = VaadinSession.getCurrent().getAttribute(User.class);
-        if (user != null) {
-            this.userBar = createUserBar();
-            this.toolBar = createToolBar();
-            this.chats = createChats();
-            this.menu = createMenu(userBar, toolBar);
-
-            add(menu, chats);
-        } else {
-            navigateToLoginView();
-        }
+        setSizeFull();
+        setSpacing(true);
     }
 
-    private VerticalLayout createMenu(VerticalLayout userBar, VerticalLayout toolBar) {
-        return new VerticalLayout(userBar, toolBar);
-    }
+    @Override
+    public void beforeEnter(BeforeEnterEvent beforeEnterEvent) {
+        Optional<Long> userIdOptional = beforeEnterEvent.getRouteParameters().getLong("userId");
 
-    private VerticalLayout createChats() {
-        List<Room> rooms = roomService.getAllRooms();
-
-        for (Room room : rooms) {
-            if (room.getUsers().size() < 2) {
-                tabs.add(createTab(room));
+        if (userIdOptional.isPresent()) {
+            this.user = getUser(userIdOptional.get());
+            if (this.user != null) {
+                broadcasterRegistration = Broadcaster.register(this::receiveBroadcasterMessage);
+                loadContent();
+            } else {
+                Notification.show("Not authorize");
+                navigateToLoginView();
             }
+        } else {
+            Notification.show("User id is missing");
         }
-
-        tabs.setSelectedTab(null);
-        tabs.setOrientation(Tabs.Orientation.VERTICAL);
-        tabs.addClassNames(LumoUtility.Flex.GROW, LumoUtility.Flex.SHRINK, LumoUtility.Overflow.HIDDEN);
-
-        tabs.addSelectedChangeListener(event -> {
-            RoomInfo roomInfo = ((RoomTab) event.getSelectedTab()).roomInfo;
-
-            ConfirmDialog confirmDialog = new ConfirmDialog();
-
-            confirmDialog.setHeader("Join to chat");
-            confirmDialog.setText("Do you want to join the chat?");
-
-            confirmDialog.setCancelable(true);
-            confirmDialog.setConfirmText("Join");
-
-            confirmDialog.addConfirmListener(e -> joinRoom(roomInfo.roomId));
-
-            confirmDialog.open();
-        });
-
-        Scroller scroller = new Scroller(tabs);
-
-        H1 title = new H1("Rooms");
-
-        return new VerticalLayout(title, scroller);
     }
 
-    private VerticalLayout createUserBar() {
+    private void loadContent() {
+        Div divider = new Div();
+        divider.getStyle().set("width", "1px");
+        divider.getStyle().set("background-color", "#394f64");
+
+        add(createLeftPanel(), divider, createRightPanel());
+    }
+
+    private User getUser(long userId) {
+        Optional<User> userOptional = userService.getUserById(userId);
+
+        return userOptional.orElse(null);
+
+    }
+
+    @Override
+    protected void onDetach(DetachEvent detachEvent) {
+        super.onDetach(detachEvent);
+        if (broadcasterRegistration != null) {
+            broadcasterRegistration.remove();
+        }
+    }
+
+    private VerticalLayout createLeftPanel() {
+        VerticalLayout leftPanel = new VerticalLayout();
+        leftPanel.setWidth("45%");
+        leftPanel.setPadding(false);
+        leftPanel.setSpacing(false);
+
+        VerticalLayout userSection = createUserSection();
+        VerticalLayout createRoomSection = createRoomSection();
+
+        leftPanel.add(userSection, new Hr(), createRoomSection);
+        leftPanel.expand(userSection);
+
+        return leftPanel;
+    }
+
+    private VerticalLayout createRightPanel() {
+        VerticalLayout rightPanel = new VerticalLayout();
+        rightPanel.setWidth("55%");
+        rightPanel.setSpacing(false);
+
+        Div roomsTitle = new Div();
+        roomsTitle.setWidthFull();
+        roomsTitle.add(new H1("Rooms"));
+        roomsTitle.getStyle().set("text-align", "center");
+
+        roomsList.setWidthFull();
+        roomsList.setContent(createRoomsList());
+
+        rightPanel.add(roomsTitle, new Hr(), roomsList);
+
+        return rightPanel;
+    }
+
+    private VerticalLayout createUserSection() {
+        VerticalLayout userSection = new VerticalLayout();
+        userSection.setWidthFull();
+        userSection.setAlignItems(Alignment.CENTER);
+
         Avatar avatar = new Avatar(user.getUsername());
-        avatar.getElement().setAttribute("tabindex", "-1");
+        avatar.setHeight("200px");
+        avatar.setWidth("200px");
 
-        MenuBar userMenu = new MenuBar();
-        userMenu.setThemeName("tertiary-inline contrast");
+        Span username = new Span(user.getUsername());
+        username.getStyle().set("font-size", "28px");
 
-        MenuItem userName = userMenu.addItem("");
+        MenuBar menuBar = new MenuBar();
+        MenuItem userMenu = menuBar.addItem(username);
+        userMenu.getSubMenu().addItem("Sign out", event -> signOut());
 
-        Div div = new Div();
-        div.add(avatar);
-        div.add(user.getUsername());
-        div.add(new Icon("lumo", "dropdown"));
-
-        div.getElement().getStyle()
-                .set("display", "flex")
-                .set("align-items", "center")
-                .set("justify-content", "center")
-                .set("gap", "var(--lumo-space-s)");
-
-        userName.add(div);
-        userName.getSubMenu().addItem("Sign out", e -> navigateToLoginView());
-
-        return new VerticalLayout(userMenu);
+        userSection.add(avatar, menuBar);
+        return userSection;
     }
 
-    private VerticalLayout createToolBar() {
+    private VerticalLayout createRoomSection() {
+        VerticalLayout createRoomSection = new VerticalLayout();
+        createRoomSection.setWidthFull();
+        createRoomSection.setAlignItems(Alignment.CENTER);
+
         H2 title = new H2("Create new room");
 
-        TextField name = new TextField("Room name");
+        TextField name = new TextField("Name");
 
         Select<String> algorithm = new Select<>();
-        algorithm.setLabel("Encryption algorithm");
-        algorithm.setValue("MARS");
-        algorithm.setItems(
-                "MARS",
-                "RC6"
-        );
+        algorithm.setLabel("Algorithm");
+        algorithm.setItems("MARS", "RC6");
 
         Select<String> mode = new Select<>();
-        mode.setLabel("Cipher mode");
-        mode.setValue("ECB");
-        mode.setItems(
-                "ECB",
-                "CBC",
-                "CFB",
-                "PCBC",
-                "OFB",
-                "CTR",
-                "RD"
-        );
+        mode.setLabel("Mode");
+        mode.setItems("ECB", "CBC", "CFB", "PCBC", "OFB", "CTR", "RD");
 
         Select<String> padding = new Select<>();
-        padding.setLabel("Encryption algorithm");
-        padding.setValue("Zeros");
-        padding.setItems(
-                "Zeros",
-                "PKCS7",
-                "ANSI_X_923",
-                "ISO_10126"
+        padding.setLabel("Padding");
+        padding.setItems("Zeros", "PKCS7", "ANSI_X_923", "ISO_10126");
+
+        Button createButton = new Button("Create", event -> {
+            createRoom(name.getValue(), algorithm.getValue(), mode.getValue(), padding.getValue());
+            Broadcaster.broadcast("update");
+        });
+        createButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+
+        createRoomSection.add(title, name, algorithm, mode, padding, createButton);
+        return createRoomSection;
+    }
+
+    private VerticalLayout createRoomsList() {
+        VerticalLayout roomsList = new VerticalLayout();
+        List<Room> rooms = roomService.getAllRooms();
+        for (Room room : rooms) {
+            roomsList.add(createRoomComponent(room));
+        }
+
+        return roomsList;
+    }
+
+    private HorizontalLayout createRoomComponent(Room room) {
+        HorizontalLayout roomComponent = new HorizontalLayout();
+        roomComponent.setWidthFull();
+        roomComponent.setMargin(true);
+        roomComponent.setPadding(true);
+        roomComponent.setSpacing(true);
+        roomComponent.getStyle()
+                .set("background-color", "#364860")
+                .set("border-radius", "10px");
+
+        Span roomName = new Span(room.getName());
+        Button joinButton = new Button("join", event -> {
+            if (connectRoom(room.getId())) {
+                navigateToChatView(room.getId());
+            }
+        });
+
+        Button deleteButton = new Button("delete", event -> {
+            deleteRoom(room.getId());
+            Broadcaster.broadcast("update");
+            Broadcaster.broadcast(String.format("delete_room_%s", room.getId()));
+        });
+
+        roomName.getStyle().set("font-size", "20px");
+        joinButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SUCCESS);
+        deleteButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_ERROR);
+
+        roomComponent.add(roomName, joinButton, deleteButton);
+        roomComponent.expand(roomName);
+        roomComponent.setAlignItems(Alignment.CENTER);
+
+        return roomComponent;
+    }
+
+    private void receiveBroadcasterMessage(String message) {
+        if (message.equals("update")) {
+            Optional<UI> maybeUI = getUI();
+            maybeUI.ifPresent(ui -> ui.access(this::updateRoomsList));
+        }
+    }
+
+    private void updateRoomsList() {
+        roomsList.setContent(createRoomsList());
+    }
+
+    private boolean connectRoom(long roomId) {
+        return serverService.connectRoom(user.getId(), roomId);
+    }
+
+    private void deleteRoom(long roomId) {
+        serverService.deleteRoom(roomId);
+    }
+
+    private void createRoom(String name, String algorithm, String mode, String padding) {
+        serverService.createRoom(name, algorithm, mode, padding);
+    }
+
+    private void navigateToChatView(long roomId) {
+        Optional<UI> maybeUI = getUI();
+        maybeUI.ifPresent(ui -> ui.access(
+                () -> UI.getCurrent().navigate(ChatView.class, new RouteParameters(Map.of(
+                        "userId", String.valueOf(user.getId()),
+                        "roomId", String.valueOf(roomId)
+                ))))
         );
-
-        Button createButton = new Button("Create", event -> createRoom(
-                name.getValue(),
-                algorithm.getValue(),
-                mode.getValue(),
-                padding.getValue()
-        ));
-        createButton.addThemeVariants(ButtonVariant.LUMO_SUCCESS);
-
-        return new VerticalLayout(title, name, algorithm, mode, padding, createButton);
-    }
-
-    private RoomTab createTab(Room room) {
-        RoomTab tab = new RoomTab(new RoomInfo(room.getId(), room.getName()));
-        tab.addClassNames(LumoUtility.JustifyContent.BETWEEN);
-        tab.add(new Span(room.getName()));
-
-        return tab;
-    }
-
-    private Room createRoom(
-            String name,
-            String algorithm,
-            String mode,
-            String padding) {
-
-        return serverService.createRoom(name, algorithm, mode, padding);
-    }
-
-    private void joinRoom(long roomId) {
-        serverService.connectRoom(user.getId(), roomId);
     }
 
     private void navigateToLoginView() {
-        UI.getCurrent().navigate(LoginView.class);
+        Optional<UI> maybeUI = getUI();
+        maybeUI.ifPresent(ui -> ui.access(
+                () -> UI.getCurrent().navigate(LoginView.class))
+        );
     }
 
+    private void signOut() {
+        UI.getCurrent().navigate(LoginView.class);
+    }
 }

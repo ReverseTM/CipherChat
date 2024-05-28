@@ -14,7 +14,7 @@ import com.vaadin.flow.router.RouteParameters;
 import org.springframework.beans.factory.annotation.Autowired;
 import ru.mai.khasanov.cipherchat.model.User;
 import ru.mai.khasanov.cipherchat.service.AuthService;
-import ru.mai.khasanov.cipherchat.vaadin.view.chat.ChatView;
+import ru.mai.khasanov.cipherchat.vaadin.view.chat.MainView;
 
 @Route("")
 @PageTitle("Login")
@@ -37,7 +37,7 @@ public class LoginView extends VerticalLayout {
                 User user = authService.authenticate(usernameField.getValue(), passwordField.getValue());
                 Notification.show("Authentication successful");
 
-                navigateToUserView(user);
+                navigateToMainView(user);
 
             } catch (AuthService.AuthException e) {
                 Notification.show("Wrong credentials.");
@@ -55,7 +55,7 @@ public class LoginView extends VerticalLayout {
         add(title, usernameField, passwordField, buttonBar);
     }
 
-    private void navigateToUserView(User user) {
-        UI.getCurrent().navigate(ChatView.class, new RouteParameters("userId", String.valueOf(user.getId())));
+    private void navigateToMainView(User user) {
+        UI.getCurrent().navigate(MainView.class, new RouteParameters("userId", String.valueOf(user.getId())));
     }
 }

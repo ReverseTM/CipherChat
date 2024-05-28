@@ -18,7 +18,7 @@ public class RoomService {
         this.roomRepository = roomRepository;
     }
 
-    public Room createRoom(
+    public void createRoom(
             String name,
             String encryptionAlgorithm,
             String cipherMode,
@@ -40,7 +40,7 @@ public class RoomService {
                 .roomCipherInfo(info)
                 .build();
 
-        return roomRepository.save(room);
+        roomRepository.save(room);
     }
 
     public boolean existsByName(String name) {
