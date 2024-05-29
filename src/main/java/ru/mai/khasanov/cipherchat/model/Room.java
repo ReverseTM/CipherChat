@@ -22,7 +22,12 @@ public class Room {
     @EqualsAndHashCode.Include
     private Long id;
 
-    @Column(name = "name")
+    @Column(name = "owner_user_id")
+    @NotNull
+    @EqualsAndHashCode.Include
+    private Long ownerUserId;
+
+    @Column(name = "name", unique = true)
     @NotBlank(message = "Room Name cannot be blank")
     @NotNull
     @EqualsAndHashCode.Include

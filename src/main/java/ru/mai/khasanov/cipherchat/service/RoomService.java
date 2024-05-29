@@ -19,6 +19,7 @@ public class RoomService {
     }
 
     public void createRoom(
+            long userId,
             String name,
             String encryptionAlgorithm,
             String cipherMode,
@@ -36,11 +37,16 @@ public class RoomService {
                 .build();
 
         Room room = Room.builder()
+                .ownerUserId(userId)
                 .name(name)
                 .roomCipherInfo(info)
                 .build();
 
         roomRepository.save(room);
+    }
+
+    public void deleteRoom(Long id) {
+        roomRepository.deleteById(id);
     }
 
     public boolean existsByName(String name) {
@@ -49,14 +55,6 @@ public class RoomService {
 
     public Optional<Room> getRoomById(Long roomId) {
         return roomRepository.findById(roomId);
-    }
-
-    public Optional<Room> getRoomByName(String roomName) {
-        return roomRepository.findByName(roomName);
-    }
-
-    public List<Room> getRoomsByUserId(Long userId) {
-        return roomRepository.findAllByUsersId(userId);
     }
 
     public List<Room> getAllRooms() {
@@ -75,9 +73,5 @@ public class RoomService {
             return true;
         }
         return false;
-    }
-
-    public void deleteRoom(Long id) {
-        roomRepository.deleteById(id);
     }
 }

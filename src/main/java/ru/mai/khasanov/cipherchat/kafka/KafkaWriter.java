@@ -1,5 +1,6 @@
 package ru.mai.khasanov.cipherchat.kafka;
 
+import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -28,7 +29,10 @@ public class KafkaWriter {
         kafkaProducer.flush();
     }
 
+    @PreDestroy
     public void stop() {
-        kafkaProducer.close();
+        if (kafkaProducer != null) {
+            kafkaProducer.close();
+        }
     }
 }

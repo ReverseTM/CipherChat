@@ -31,11 +31,14 @@ public class RoomCipherInfo {
     private String paddingMode;
 
     @Column(name = "iv")
+    @NotNull
     private byte[] IV;
 
     @Column(name = "primitive_root")
+    @NotNull
     private byte[] g;
 
     @Column(name = "modulo")
+    @NotNull
     private byte[] p;
 }

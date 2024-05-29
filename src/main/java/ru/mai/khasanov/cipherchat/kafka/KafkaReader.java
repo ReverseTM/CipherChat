@@ -47,7 +47,7 @@ public class KafkaReader {
         executorService.execute(() -> {
             try {
                 while (isRunning) {
-                    ConsumerRecords<byte[], byte[]> consumerRecords = this.kafkaConsumer.poll(Duration.ofMillis(1000));
+                    ConsumerRecords<byte[], byte[]> consumerRecords = this.kafkaConsumer.poll(Duration.ofMillis(3000));
 
                     for (ConsumerRecord<byte[], byte[]> consumerRecord : consumerRecords) {
                         handleKafkaMessage(consumerRecord);

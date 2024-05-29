@@ -7,10 +7,7 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.contextmenu.MenuItem;
 import com.vaadin.flow.component.contextmenu.SubMenu;
-import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H2;
-import com.vaadin.flow.component.html.Image;
-import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.html.*;
 import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.menubar.MenuBar;
 import com.vaadin.flow.component.messages.MessageInput;
@@ -23,10 +20,13 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouteParameters;
+import com.vaadin.flow.server.Command;
 import com.vaadin.flow.server.StreamResource;
 import com.vaadin.flow.shared.Registration;
 import com.vaadin.flow.theme.lumo.LumoUtility;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import ru.mai.khasanov.cipherchat.cryptography.CipherFactory;
+import ru.mai.khasanov.cipherchat.cryptography.CipherService;
 import ru.mai.khasanov.cipherchat.cryptography.DiffieHellmanAlgorithm;
 import ru.mai.khasanov.cipherchat.kafka.KafkaReader;
 import ru.mai.khasanov.cipherchat.kafka.KafkaWriter;
@@ -39,7 +39,6 @@ import ru.mai.khasanov.cipherchat.service.RoomService;
 import ru.mai.khasanov.cipherchat.service.ServerService;
 import ru.mai.khasanov.cipherchat.service.UserService;
 import ru.mai.khasanov.cipherchat.vaadin.Broadcaster;
-import ru.mai.khasanov.cipherchat.vaadin.view.login.LoginView;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -49,11 +48,14 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 @Route("user/:userId/room/:roomId")
 public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
     private User user;
     private Room room;
+
+    private RoomCipherInfo cipherInfo;
 
     private final ServerService serverService;
     private final UserService userService;
@@ -61,11 +63,14 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
 
     private final KafkaWriter kafkaWriter;
     private final KafkaReader kafkaReader;
+    private String outputTopic;
 
     private Registration broadcasterRegistration;
 
     private Frontend frontend;
     private Backend backend;
+
+    private boolean disconnected;
 
     public ChatView(
             ServerService serverService,
@@ -77,6 +82,7 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
         this.roomService = roomService;
         this.kafkaWriter = kafkaWriter;
         this.kafkaReader = kafkaReader;
+        this.disconnected = false;
     }
 
     @Override
@@ -92,25 +98,41 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
                 this.user = userOptional.get();
                 this.room = roomOptional.get();
 
-                this.broadcasterRegistration = Broadcaster.register(this::receiveBroadcasterMessage);
+                if (this.room.getUsers().contains(this.user)) {
+                    this.broadcasterRegistration = Broadcaster.register(this::receiveBroadcasterMessage);
+                    this.cipherInfo = this.room.getRoomCipherInfo();
 
-                this.backend = new Backend();
-                this.frontend = new Frontend();
+                    this.backend = new Backend();
+                    this.frontend = new Frontend();
 
-                return;
+                    return;
+                }
             }
         }
 
-        Notification.show("Something wrong");
-        navigateToLoginView();
+        disconnected = true;
     }
 
     @Override
     protected void onDetach(DetachEvent detachEvent) {
         super.onDetach(detachEvent);
 
-        backend.disconnect();
         kafkaReader.stop();
+
+        if (outputTopic != null) {
+            KafkaMessage kafkaMessage = new KafkaMessage(KafkaMessage.Action.CLEAR_MESSAGES, null);
+            kafkaWriter.write(kafkaMessage.toBytes(), outputTopic);
+        }
+
+        if (!disconnected) {
+            if (backend.disconnect()) {
+                Broadcaster.broadcast("update");
+            }
+        }
+
+        if (backend != null && backend.cipherService != null) {
+            backend.cipherService.close();
+        }
 
         if (broadcasterRegistration != null) {
             broadcasterRegistration.remove();
@@ -122,24 +144,24 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
             long roomId = Long.parseLong(message.split("_")[2]);
 
             if (roomId == this.room.getId()) {
-                navigateToMainView();
+                disconnected = true;
+                updateUI(this::navigateToMainView);
             }
         }
     }
 
-    private void navigateToLoginView() {
-        Optional<UI> maybeUI = getUI();
-        maybeUI.ifPresent(ui -> ui.access(
-                () -> UI.getCurrent().navigate(LoginView.class))
-        );
-        UI.getCurrent().navigate(LoginView.class);
+    private void navigateToMainView() {
+        UI.getCurrent().navigate(MainView.class, new RouteParameters("userId", String.valueOf(user.getId())));
     }
 
-    private void navigateToMainView() {
+    private void notifyUser(String message) {
+        updateUI(() -> Notification.show(message));
+    }
+
+    private void updateUI(Command command) {
         Optional<UI> maybeUI = getUI();
-        maybeUI.ifPresent(ui -> ui.access(
-                () -> UI.getCurrent().navigate(MainView.class, new RouteParameters("userId", String.valueOf(user.getId()))))
-        );
+        maybeUI.ifPresent(ui -> ui.access(command));
+
     }
 
     private class Frontend {
@@ -165,6 +187,7 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
             roomContainer.expand(messageContainer);
 
             add(roomContainer);
+
         }
 
         private HorizontalLayout createRoomHeaderContent() {
@@ -190,7 +213,16 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
 
                 confirmDialog.setCancelable(true);
                 confirmDialog.setConfirmText("Disconnect");
-                confirmDialog.addConfirmListener(e -> navigateToMainView());
+                confirmDialog.addConfirmListener(e -> {
+                    if (backend.disconnect()) {
+                        disconnected = true;
+                        notifyUser("You have been successfully disconnected from the room");
+                        Broadcaster.broadcast("update");
+                        navigateToMainView();
+                    } else {
+                        notifyUser("Failed to disconnect from room");
+                    }
+                });
 
                 confirmDialog.open();
             });
@@ -264,51 +296,51 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
         }
 
         private void showTextMessage(String message, Destination destination) {
-            Optional<UI> maybeUI = getUI();
-
-            maybeUI.ifPresent(ui -> ui.access(() -> {
+            updateUI(() -> {
                 HorizontalLayout messageContent = new HorizontalLayout();
                 messageContent.getStyle()
                         .set("display", "flex")
-                        .set("align-items", "flex-end");
+                        .set("align-items", "flex-end")
+                        .set("max-width", "100%");
                 messageContent.setSpacing(true);
 
                 Span messageSpan = new Span(message);
                 messageSpan.getStyle()
-                        .set("font-size", "15px");
+                        .set("font-size", "20px")
+                        .set("white-space", "normal")
+                        .set("overflow-wrap", "break-word")
+                        .set("flex-grow", "1")
+                        .set("min-width", "0");
 
                 Span timeSpan = new Span(getCurrentTime());
                 timeSpan.getStyle()
-                        .set("font-size", "10px")
+                        .set("font-size", "12px")
                         .set("color", "#888")
-                        .set("margin-left", "7px");
+                        .set("margin-left", "7px")
+                        .set("flex-shrink", "0");
 
                 messageContent.add(messageSpan, timeSpan);
 
-                Div div = new Div();
-
+                Div div = new Div(messageContent);
                 div.getStyle()
                         .set("border-radius", "12px")
-                        .set("padding", "5px");
+                        .set("padding", "5px")
+                        .set("max-width", "100%")
+                        .set("box-sizing", "border-box");
 
                 if (destination.equals(Destination.PRODUCER)) {
                     div.getStyle().set("background-color", "#2b5377");
                 } else {
-                    div.getStyle().set("background-color", "#0e1621");
+                    div.getStyle().set("background-color", "#182633");
                 }
 
-                div.add(messageContent);
-
                 this.messageContainer.add(div);
-            }));
+            });
+
         }
 
         private void showImageMessage(String filename, byte[] imageData) {
-            Optional<UI> maybeUI = getUI();
-
-            maybeUI.ifPresent(ui -> ui.access(() -> {
-                Div div = new Div();
-
+            updateUI(() -> {
                 StreamResource imageResource = new StreamResource(filename, () -> new ByteArrayInputStream(imageData));
                 Image image = new Image(imageResource, "image");
 
@@ -318,18 +350,59 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
                         .set("border", "1px solid #ccc")
                         .set("border-radius", "25px");
 
-                div.add(image);
+                Div div = new Div(image);
 
                 this.messageContainer.add(div);
-            }));
+            });
         }
 
-        private void showFileMessage(String filename, byte[] fileData) {
-            Optional<UI> maybeUI = getUI();
+        private void showFileMessage(String filename, byte[] fileData, Destination destination) {
+            updateUI(() -> {
+                HorizontalLayout messageContent = new HorizontalLayout();
+                messageContent.getStyle()
+                        .set("display", "flex")
+                        .set("align-items", "flex-end")
+                        .set("max-width", "100%");
+                messageContent.setSpacing(true);
 
-            maybeUI.ifPresent(ui -> ui.access(() -> {
+                Anchor file = new Anchor(new StreamResource(filename, () -> new ByteArrayInputStream(fileData)), filename);
+                file.getElement().setAttribute("download", true);
+                file.getStyle()
+                        .set("font-size", "20px")
+                        .set("white-space", "normal")
+                        .set("overflow-wrap", "break-word")
+                        .set("flex-grow", "1")
+                        .set("min-width", "0");
 
-            }));
+                Span timeSpan = new Span(getCurrentTime());
+                timeSpan.getStyle()
+                        .set("font-size", "12px")
+                        .set("color", "#888")
+                        .set("margin-left", "7px")
+                        .set("flex-shrink", "0");
+
+                messageContent.add(file, timeSpan);
+
+                Div div = new Div(messageContent);
+
+                div.getStyle()
+                        .set("border-radius", "12px")
+                        .set("padding", "5px")
+                        .set("max-width", "100%")
+                        .set("box-sizing", "border-box");
+
+                if (destination.equals(Destination.PRODUCER)) {
+                    div.getStyle().set("background-color", "#2b5377");
+                } else {
+                    div.getStyle().set("background-color", "#182633");
+                }
+
+                this.messageContainer.add(div);
+            });
+        }
+
+        private void clearMessages() {
+            updateUI(this.messageContainer::removeAll);
         }
 
         private void handleFileMessage(String filename, String type, InputStream inputStream) {
@@ -342,12 +415,12 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
                     showImageMessage(filename, data);
                 } else {
                     message = new ContentMessage(ContentMessage.Type.FILE, data, filename);
-                    showFileMessage(filename, data);
+                    showFileMessage(filename, data, Destination.PRODUCER);
                 }
 
                 backend.sendMessage(message);
             } catch (IOException e) {
-                Notification.show("Something wrong");
+                notifyUser("Something wrong");
             }
         }
 
@@ -377,10 +450,9 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
     }
 
     private class Backend {
-        private String outputTopic;
+        private CipherService cipherService;
 
         private byte[] ownPrivateKey;
-        private byte[] sharedPrivateKey;
 
         public Backend() {
             String inputTopic = String.format("input_room_%s_user_%s", room.getId(), user.getId());
@@ -390,19 +462,17 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
             kafkaReader.startKafkaConsumer();
         }
 
-        private void disconnect() {
-            serverService.disconnectRoom(user.getId(), room.getId());
+        private boolean disconnect() {
+            return serverService.disconnectRoom(user.getId(), room.getId());
         }
 
         private void handleKafkaMessage(ConsumerRecord<byte[], byte[]> consumerRecord) {
             KafkaMessage message = KafkaMessage.toKafkaMessage(new String(consumerRecord.value()));
 
-            System.out.println(message.action());
-
             switch (message.action()) {
                 case SETUP_CONNECTION -> {
                     if (message.content() instanceof Long anotherUserId) {
-                        this.outputTopic = String.format("input_room_%s_user_%s", room.getId(), anotherUserId);
+                        outputTopic = String.format("input_room_%s_user_%s", room.getId(), anotherUserId);
                         exchangePublicKey();
                     }
                 }
@@ -413,8 +483,10 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
                     }
                 }
 
+                case CLEAR_MESSAGES -> frontend.clearMessages();
+
                 case MESSAGE -> {
-                    if (message.content() instanceof ContentMessage acceptedMessage) {
+                    if (message.content() instanceof byte[] acceptedMessage) {
                         handleMessage(acceptedMessage);
                     }
                 }
@@ -424,56 +496,63 @@ public class ChatView extends HorizontalLayout implements BeforeEnterObserver {
         }
 
         private void exchangePublicKey() {
-            RoomCipherInfo roomCipherInfo = room.getRoomCipherInfo();
-
             ownPrivateKey = DiffieHellmanAlgorithm.generateOwnPrivateKey();
             byte[] ownPublicKey = DiffieHellmanAlgorithm.generateOwnPublicKey(
                     ownPrivateKey,
-                    roomCipherInfo.getG(),
-                    roomCipherInfo.getP());
+                    cipherInfo.getG(),
+                    cipherInfo.getP());
 
             KafkaMessage keyMessage = new KafkaMessage(KafkaMessage.Action.EXCHANGE_PUBLIC_KEY, ownPublicKey);
-
             kafkaWriter.write(keyMessage.toBytes(), outputTopic);
         }
 
         private void setSharedPrivateKey(byte[] anotherPublicKey) {
-            RoomCipherInfo roomCipherInfo = room.getRoomCipherInfo();
-
-            sharedPrivateKey = DiffieHellmanAlgorithm.calculateSharedPrivateKey(
+            byte[] sharedPrivateKey = DiffieHellmanAlgorithm.calculateSharedPrivateKey(
                     anotherPublicKey,
                     ownPrivateKey,
-                    roomCipherInfo.getP());
+                    cipherInfo.getP());
 
-            Optional<UI> maybeUI = getUI();
-            maybeUI.ifPresent(ui -> ui.access(() -> Notification.show("Secret key setup")));
+            this.cipherService = CipherFactory.createCipherService(cipherInfo, sharedPrivateKey);
+
+            notifyUser("Connection established");
         }
 
-        private void handleMessage(ContentMessage message) {
-            // todo decrypt
+        private void handleMessage(byte[] message) {
+            if (cipherService != null) {
+                CompletableFuture<byte[]> decryptedMessageFuture = cipherService.decrypt(message);
 
-            byte[] messageBytes = message.message();
+                decryptedMessageFuture.thenAccept(decryptedMessage -> {
+                    ContentMessage contentMessage = ContentMessage.toContentMessage(new String(decryptedMessage));
 
-            switch (message.messageType()) {
-                case TEXT -> {
-                    frontend.showTextMessage(new String(messageBytes), Frontend.Destination.CONSUMER);
-                }
+                    byte[] messageBytes = contentMessage.message();
 
-                case IMAGE -> {
-                    frontend.showImageMessage(message.filename(), messageBytes);
-                }
+                    switch (contentMessage.messageType()) {
+                        case TEXT -> frontend.showTextMessage(new String(messageBytes), Frontend.Destination.CONSUMER);
 
-                case FILE -> {
-                    frontend.showFileMessage(message.filename(), messageBytes);
-                }
+                        case IMAGE -> frontend.showImageMessage(contentMessage.filename(), messageBytes);
 
-                default -> throw new IllegalStateException("Unexpected state");
+                        case FILE ->
+                                frontend.showFileMessage(contentMessage.filename(), messageBytes, Frontend.Destination.CONSUMER);
+
+                        default -> throw new IllegalStateException("Unexpected message type");
+                    }
+                });
+            } else {
+                notifyUser("Failed to process message");
             }
         }
 
         private void sendMessage(ContentMessage message) {
-            KafkaMessage kafkaMessage = new KafkaMessage(KafkaMessage.Action.MESSAGE, message);
-            kafkaWriter.write(kafkaMessage.toBytes(), outputTopic);
+            if (cipherService != null && outputTopic != null) {
+                CompletableFuture<byte[]> encryptedMessageFuture = cipherService.encrypt(message.toBytes());
+
+                encryptedMessageFuture.thenAccept(encryptedMessage -> {
+                    KafkaMessage kafkaMessage = new KafkaMessage(KafkaMessage.Action.MESSAGE, encryptedMessage);
+                    kafkaWriter.write(kafkaMessage.toBytes(), outputTopic);
+                });
+            } else {
+                notifyUser("Failed to send message");
+            }
         }
     }
 }

@@ -1,6 +1,5 @@
 package ru.mai.khasanov.cipherchat.service;
 
-import com.vaadin.flow.component.notification.Notification;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,48 +28,47 @@ public class ServerService {
     }
 
     @Transactional
-    public synchronized void createRoom(String name,
-                                        String algorithm,
-                                        String mode,
-                                        String padding) {
+    public synchronized boolean createRoom(
+            long userId,
+            String name,
+            String algorithm,
+            String mode,
+            String padding) {
 
-        if (roomService.existsByName(name)) {
-            Notification.show("Room with same name already exist");
-            return;
+        if (!roomService.existsByName(name)) {
+            BigInteger[] params = DiffieHellmanAlgorithm.generateParams(32);
+            byte[] g = params[0].toByteArray();
+            byte[] p = params[1].toByteArray();
+
+            roomService.createRoom(userId, name, algorithm, mode, padding, g, p);
+
+            return true;
         }
 
-        BigInteger[] params = DiffieHellmanAlgorithm.generateParams(32);
-        byte[] g = params[0].toByteArray();
-        byte[] p = params[1].toByteArray();
-
-        roomService.createRoom(name, algorithm, mode, padding, g, p);
-        Notification.show("Room created successfully");
+        return false;
     }
 
     @Transactional
-    public synchronized void deleteRoom(long roomId) {
+    public synchronized boolean deleteRoom(long roomId) {
         Optional<Room> maybeRoom = roomService.getRoomById(roomId);
 
-        if (maybeRoom.isEmpty()) {
-            Notification.show("Room with id " + roomId + " does not exist");
-            return;
-        }
-
-        Room room = maybeRoom.get();
-
-        boolean status;
-        Set<User> users = room.getUsers();
-        for (User user : users) {
-            status = userService.removeRoomFromUser(user, room);
-            if (!status) {
-                Notification.show("Something wrong");
-                return;
+        if (maybeRoom.isPresent()) {
+            Room room = maybeRoom.get();
+            boolean status;
+            Set<User> users = room.getUsers();
+            for (User user : users) {
+                status = disconnectRoom(user.getId(), room.getId());
+                if (!status) {
+                    return false;
+                }
             }
+
+            roomService.deleteRoom(roomId);
+
+            return true;
         }
 
-        roomService.deleteRoom(roomId);
-
-        Notification.show("Room deleted successfully");
+        return false;
     }
 
     @Transactional
@@ -78,46 +76,50 @@ public class ServerService {
         Optional<Room> maybeRoom = roomService.getRoomById(roomId);
         Optional<User> maybeUser = userService.getUserById(userId);
 
-        if (maybeRoom.isEmpty()) {
-            Notification.show("Room with id " + roomId + " does not exist");
-            return false;
+        if (maybeRoom.isPresent() && maybeUser.isPresent()) {
+            Room room = maybeRoom.get();
+            User user = maybeUser.get();
+
+            if (!(room.getUsers().contains(user))) {
+                if (!(room.getUsers().size() == 2)) {
+                    long anotherUserId = 0;
+                    boolean setupConnection = false;
+                    if (room.getUsers().size() == 1) {
+                        anotherUserId = room.getUsers().iterator().next().getId();
+                        setupConnection = true;
+                    }
+
+                    roomService.addUserToRoom(user, room);
+                    userService.addRoomToUser(user, room);
+
+                    if (setupConnection) {
+                        exchangeInformation(userId, anotherUserId, roomId);
+                    }
+
+                    return true;
+                }
+            }
         }
 
-        if (maybeUser.isEmpty()) {
-            Notification.show("User with id " + userId + " does not exist");
-            return false;
+        return false;
+    }
+
+    @Transactional
+    public synchronized boolean disconnectRoom(long userId, long roomId) {
+        Optional<Room> maybeRoom = roomService.getRoomById(roomId);
+        Optional<User> maybeUser = userService.getUserById(userId);
+
+        if (maybeRoom.isPresent() && maybeUser.isPresent()) {
+            Room room = maybeRoom.get();
+            User user = maybeUser.get();
+
+            boolean roomStatus = roomService.removeUserFromRoom(user, room);
+            boolean userStatus = userService.removeRoomFromUser(user, room);
+
+            return roomStatus && userStatus;
         }
 
-        Room room = maybeRoom.get();
-        User user = maybeUser.get();
-
-        if (room.getUsers().contains(user)) {
-            Notification.show("You already joined to this room");
-            return false;
-        }
-
-        if (room.getUsers().size() == 2) {
-            Notification.show("The maximum number of group members has been reached");
-            return false;
-        }
-
-        long anotherUserId = 0;
-        boolean setupConnection = false;
-        if (room.getUsers().size() == 1) {
-            anotherUserId = room.getUsers().iterator().next().getId();
-            setupConnection = true;
-        }
-
-        roomService.addUserToRoom(user, room);
-        userService.addRoomToUser(user, room);
-
-        Notification.show("You joined to room successfully");
-
-        if (setupConnection) {
-            exchangeInformation(userId, anotherUserId, roomId);
-        }
-
-        return true;
+        return false;
     }
 
     private void exchangeInformation(long thisUserId, long anotherUserId, long roomId) {
@@ -129,34 +131,5 @@ public class ServerService {
 
         kafkaWriter.write(messageToThisUser.toBytes(), thisUserTopic);
         kafkaWriter.write(messageToAnotherUser.toBytes(), anotherUserTopic);
-    }
-
-    @Transactional
-    public synchronized void disconnectRoom(long userId, long roomId) {
-        Optional<Room> maybeRoom = roomService.getRoomById(roomId);
-        Optional<User> maybeUser = userService.getUserById(userId);
-
-        if (maybeRoom.isEmpty()) {
-            Notification.show("Room with id " + roomId + " does not exist");
-            return;
-        }
-
-        if (maybeUser.isEmpty()) {
-            Notification.show("User with id " + userId + " does not exist");
-            return;
-        }
-
-        Room room = maybeRoom.get();
-        User user = maybeUser.get();
-
-        boolean roomStatus = roomService.removeUserFromRoom(user, room);
-        boolean userStatus = userService.removeRoomFromUser(user, room);
-
-        if (!roomStatus || !userStatus) {
-            Notification.show("An error occurred while disconnecting from the room");
-            return;
-        }
-
-        Notification.show("You have been successfully disconnected from the room");
     }
 }

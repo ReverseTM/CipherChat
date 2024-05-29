@@ -7,6 +7,7 @@ public record KafkaMessage(Action action, Object content) {
     public enum Action {
         SETUP_CONNECTION,
         EXCHANGE_PUBLIC_KEY,
+        CLEAR_MESSAGES,
         MESSAGE
     }
 

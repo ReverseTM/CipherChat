@@ -17,16 +17,8 @@ public class UserService {
         this.userRepository = userRepository;
     }
 
-    public List<User> getAllUsers() {
-        return userRepository.findAll();
-    }
-
     public Optional<User> getUserById(long id) {
         return userRepository.findById(id);
-    }
-
-    public Optional<User> getUserByUsername(String username) {
-        return userRepository.findByUsername(username);
     }
 
     public void addRoomToUser(User user, Room room) {
