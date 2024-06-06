@@ -1,0 +1,15 @@
+.v-message-list {
+    border: 1px solid #ccc;
+    overflow-y: auto;
+    height: 80vh;
+}
+.v-chat-list {
+    border: 1px solid #ccc;
+    width: 200px;
+    overflow-y: auto;
+}
+.toolbar {
+    width: 100%;
+    padding: 10px;
+    border-bottom: 1px solid #ccc;
+}

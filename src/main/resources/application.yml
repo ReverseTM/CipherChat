@@ -2,11 +2,18 @@ spring:
   application:
     name: CipherChat
   datasource:
-    url: jdbc:postgresql://localhost:5432/crypto_messenger
+    url: jdbc:postgresql://localhost:5432/cipher_chat
     username: postgres
     password: 111
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
       ddl-auto: update
-    open-in-view: true
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+  devtools:
+    restart:
+      poll-interval: 2s
+      quiet-period: 1s
