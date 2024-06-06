@@ -1,11 +1,9 @@
 package ru.mai.khasanov.cipherchat.model.message;
 
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 
-public record ContentMessage (Type messageType, byte[] message, String filename) {
+public record FileMessageMetadata(String messageId, Type type, String filename, long length) {
     public enum Type {
-        TEXT,
         IMAGE,
         FILE
     }
@@ -16,7 +14,7 @@ public record ContentMessage (Type messageType, byte[] message, String filename)
         return gson.toJson(this).getBytes();
     }
 
-    public static ContentMessage toContentMessage(String json) {
-        return gson.fromJson(json, ContentMessage.class);
+    public static FileMessageMetadata toFileMessageMetadata(String json) {
+        return gson.fromJson(json, FileMessageMetadata.class);
     }
 }

@@ -39,12 +39,10 @@ public class CipherService {
     }
 
     public CompletableFuture<byte[]> encrypt(byte[] text) {
-        log.info("Starting encryption");
         return CompletableFuture.supplyAsync(() -> cipherMode.encrypt(padding.applyPadding(text, blockLength)));
     }
 
     public CompletableFuture<byte[]> decrypt(byte[] cipherText) {
-        log.info("Starting decryption");
         return CompletableFuture.supplyAsync(() -> padding.removePadding(cipherMode.decrypt(cipherText)));
     }
 

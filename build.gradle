@@ -9,7 +9,7 @@ group = 'ru.mai.khasanov.cryptography'
 version = '0.0.1-SNAPSHOT'
 
 java {
-    sourceCompatibility = '17'
+    sourceCompatibility = '21'
 }
 
 configurations {
@@ -34,7 +34,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.security:spring-security-core:6.2.3'
     implementation 'com.vaadin:vaadin-spring-boot-starter'
-    implementation 'org.springframework.kafka:spring-kafka'
+    //implementation 'org.springframework.kafka:spring-kafka'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
 
     // json

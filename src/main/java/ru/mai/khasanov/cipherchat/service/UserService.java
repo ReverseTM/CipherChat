@@ -1,7 +1,7 @@
 package ru.mai.khasanov.cipherchat.service;
 
-import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
+//import ru.mai.khasanov.cipherchat.model.Message;
 import ru.mai.khasanov.cipherchat.model.Room;
 import ru.mai.khasanov.cipherchat.model.User;
 import ru.mai.khasanov.cipherchat.repository.UserRepository;
@@ -34,4 +34,14 @@ public class UserService {
         }
         return false;
     }
+
+//    public void addSentMessage(User user, Message message) {
+//        user.getSentMessages().add(message);
+//        userRepository.save(user);
+//    }
+//
+//    public void addReceivedMessage(User user, Message message) {
+//        user.getReceivedMessages().add(message);
+//        userRepository.save(user);
+//    }
 }

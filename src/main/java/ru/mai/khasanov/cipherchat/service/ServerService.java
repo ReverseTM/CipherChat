@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.mai.khasanov.cipherchat.cryptography.DiffieHellmanAlgorithm;
 import ru.mai.khasanov.cipherchat.kafka.KafkaWriter;
+//import ru.mai.khasanov.cipherchat.model.Message;
 import ru.mai.khasanov.cipherchat.model.Room;
 import ru.mai.khasanov.cipherchat.model.User;
 import ru.mai.khasanov.cipherchat.model.message.KafkaMessage;
@@ -17,6 +18,7 @@ import java.util.Set;
 public class ServerService {
     private final UserService userService;
     private final RoomService roomService;
+    //private final MessageService messageService;
 
     private final KafkaWriter kafkaWriter;
 
@@ -24,6 +26,7 @@ public class ServerService {
     public ServerService(UserService userService, RoomService roomService, KafkaWriter kafkaWriter) {
         this.userService = userService;
         this.roomService = roomService;
+        //this.messageService = messageService;
         this.kafkaWriter = kafkaWriter;
     }
 
@@ -82,10 +85,10 @@ public class ServerService {
 
             if (!(room.getUsers().contains(user))) {
                 if (!(room.getUsers().size() == 2)) {
-                    long anotherUserId = 0;
+                    long consumerId = 0;
                     boolean setupConnection = false;
                     if (room.getUsers().size() == 1) {
-                        anotherUserId = room.getUsers().iterator().next().getId();
+                        consumerId = room.getUsers().iterator().next().getId();
                         setupConnection = true;
                     }
 
@@ -93,7 +96,7 @@ public class ServerService {
                     userService.addRoomToUser(user, room);
 
                     if (setupConnection) {
-                        exchangeInformation(userId, anotherUserId, roomId);
+                        exchangeInformation(userId, consumerId, roomId);
                     }
 
                     return true;
@@ -122,14 +125,32 @@ public class ServerService {
         return false;
     }
 
-    private void exchangeInformation(long thisUserId, long anotherUserId, long roomId) {
-        String thisUserTopic = String.format("input_room_%s_user_%s", roomId, thisUserId);
-        String anotherUserTopic = String.format("input_room_%s_user_%s", roomId, anotherUserId);
+//    public synchronized boolean saveMessage(long producerId, long consumerId, byte[] messageBytes) {
+//        Optional<User> maybeProducer = userService.getUserById(producerId);
+//        Optional<User> maybeConsumer = userService.getUserById(consumerId);
+//
+//        if (maybeProducer.isPresent() && maybeConsumer.isPresent()) {
+//            User producer = maybeProducer.get();
+//            User consumer = maybeConsumer.get();
+//
+//            Message message = messageService.save(producer, consumer, messageBytes);
+//            userService.addSentMessage(producer, message);
+//            userService.addReceivedMessage(consumer, message);
+//
+//            return true;
+//        }
+//
+//        return false;
+//    }
 
-        KafkaMessage messageToThisUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, anotherUserId);
-        KafkaMessage messageToAnotherUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, thisUserId);
+    private void exchangeInformation(long producerId, long consumerId, long roomId) {
+        String producerTopic = String.format("input_room_%s_user_%s", roomId, producerId);
+        String consumerTopic = String.format("input_room_%s_user_%s", roomId, consumerId);
 
-        kafkaWriter.write(messageToThisUser.toBytes(), thisUserTopic);
-        kafkaWriter.write(messageToAnotherUser.toBytes(), anotherUserTopic);
+        KafkaMessage messageToThisUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, consumerId);
+        KafkaMessage messageToAnotherUser = new KafkaMessage(KafkaMessage.Action.SETUP_CONNECTION, producerId);
+
+        kafkaWriter.write(messageToThisUser.toBytes(), producerTopic);
+        kafkaWriter.write(messageToAnotherUser.toBytes(), consumerTopic);
     }
 }

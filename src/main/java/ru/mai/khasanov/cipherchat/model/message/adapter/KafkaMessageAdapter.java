@@ -1,6 +1,7 @@
-package ru.mai.khasanov.cipherchat.model.message;
+package ru.mai.khasanov.cipherchat.model.message.adapter;
 
 import com.google.gson.*;
+import ru.mai.khasanov.cipherchat.model.message.KafkaMessage;
 
 import java.lang.reflect.Type;
 import java.util.Base64;
@@ -17,8 +18,6 @@ public class KafkaMessageAdapter implements JsonSerializer<KafkaMessage>, JsonDe
         } else if (message.content() instanceof byte[]) {
             String base64Content = Base64.getEncoder().encodeToString((byte[]) message.content());
             jsonObject.addProperty("content", base64Content);
-        } else if (message.content() instanceof ContentMessage) {
-            jsonObject.add("content", context.serialize(message.content(), ContentMessage.class));
         } else {
             jsonObject.add("content", context.serialize(message.content()));
         }
@@ -41,8 +40,6 @@ public class KafkaMessageAdapter implements JsonSerializer<KafkaMessage>, JsonDe
             } else {
                 content = contentString;
             }
-        } else if (contentElement.isJsonObject() && contentElement.getAsJsonObject().has("messageType")) {
-            content = context.deserialize(contentElement, ContentMessage.class);
         } else {
             content = context.deserialize(contentElement, Object.class);
         }
